@@ -1,7 +1,7 @@
 import socket
 import threading
 import customtkinter as ctk
-from tkinter import scrolledtext, messagebox, simpledialog
+from tkinter import scrolledtext, messagebox
 
 
 class RussianRouletteClient:
@@ -11,9 +11,12 @@ class RussianRouletteClient:
         self.game_started = False
         self.is_my_turn = False
         self.players_list = []
+        self.selection_window = None
+        self.loading_label = None
+        self.player_var = None
 
         # Настройка графического интерфейса
-        ctk.set_appearance_mode("dark")
+        ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
 
         self.root = ctk.CTk()
@@ -146,9 +149,13 @@ class RussianRouletteClient:
         about_text = """
         Русская рулетка - клиент для игры по сети
 
-        Версия: 1.0
-        Разработчик: Ваше имя
+        Версия: 1.1
+        Разработчики: 
+        -Мендыгалиев Д.С. 
+        -Барсуков М.В.
 
+        Под руководством: 
+        -Тагирова Л.Ф.
         Особенности:
         - Подключение к серверу игры
         - Удобный графический интерфейс
@@ -212,7 +219,7 @@ class RussianRouletteClient:
                     self.is_my_turn = False
 
                 # Сохраняем список игроков, если он пришел
-                if "Доступные цели:" in message:
+                if "Доступные цели:" in message or "игроки" in message.lower():
                     self.parse_players_list(message)
 
                 self.add_to_log(message)
@@ -239,61 +246,90 @@ class RussianRouletteClient:
         for line in lines:
             if line.startswith('- '):
                 players.append(line[2:].strip())
+
         self.players_list = players
-        self.add_to_log("Список игроков обновлен")
+
+        # Если окно выбора уже создано, обновляем его
+        if hasattr(self, 'selection_window') and self.selection_window and self.selection_window.winfo_exists():
+            self.update_selection_window()
 
     def show_player_selection(self):
         """Показывает диалог выбора игрока для выстрела"""
-        #if not self.is_my_turn:
-        #    self.add_to_log("Сейчас не ваш ход!")
-        #    return
+        if not self.is_my_turn:
+            self.add_to_log("Сейчас не ваш ход!")
+            return
 
         if not self.game_started:
             self.add_to_log("Игра еще не началась!")
             return
 
-        if not self.players_list:
-            self.send_action("игроки")
-            self.add_to_log("Запрошен список игроков... Попробуйте снова через секунду")
+        # Создаем окно сразу
+        self.selection_window = ctk.CTkToplevel(self.root)
+        self.selection_window.title("Выберите игрока")
+        self.selection_window.geometry("300x200")
+        self.selection_window.transient(self.root)
+        self.selection_window.grab_set()
+
+        # Показываем сообщение о загрузке
+        self.loading_label = ctk.CTkLabel(self.selection_window, text="Загрузка списка игроков...")
+        self.loading_label.pack(pady=50)
+
+        # Запрашиваем актуальный список игроков
+        self.send_action("игроки")
+
+    def update_selection_window(self):
+        """Обновляет окно выбора игрока после получения списка"""
+        if not hasattr(self,
+                       'selection_window') or not self.selection_window or not self.selection_window.winfo_exists():
             return
 
-        # Создаем новое окно для выбора игрока
-        selection_window = ctk.CTkToplevel(self.root)
-        selection_window.title("Выберите игрока")
-        selection_window.geometry("300x200")
-        selection_window.transient(self.root)  # Делаем окно модальным
-        selection_window.grab_set()  # Захватываем фокус
-
-        ctk.CTkLabel(selection_window, text="Выберите игрока:").pack(pady=10)
+        # Удаляем сообщение о загрузке
+        if hasattr(self, 'loading_label') and self.loading_label:
+            self.loading_label.destroy()
 
         # Удаляем текущего игрока из списка целей
         available_players = [p for p in self.players_list if p != self.player_name]
+
         if not available_players:
-            ctk.CTkLabel(selection_window, text="Нет других игроков!").pack(pady=10)
-            ctk.CTkButton(selection_window, text="Закрыть", command=selection_window.destroy).pack(pady=10)
+            ctk.CTkLabel(self.selection_window, text="Нет других игроков!").pack(pady=10)
+            ctk.CTkButton(
+                self.selection_window,
+                text="Закрыть",
+                command=self.selection_window.destroy
+            ).pack(pady=10)
             return
 
-        player_var = ctk.StringVar(value=available_players[0])
-        player_menu = ctk.CTkOptionMenu(selection_window, values=available_players, variable=player_var)
+        # Создаем элементы выбора игрока
+        ctk.CTkLabel(self.selection_window, text="Выберите игрока:").pack(pady=10)
+
+        self.player_var = ctk.StringVar(value=available_players[0])
+        player_menu = ctk.CTkOptionMenu(
+            self.selection_window,
+            values=available_players,
+            variable=self.player_var
+        )
         player_menu.pack(pady=10)
 
-        def confirm_shot():
-            selected_player = player_var.get()
-            if selected_player:
-                self.send_action(f"игрок {selected_player}")
-            selection_window.destroy()
-
         ctk.CTkButton(
-            selection_window,
+            self.selection_window,
             text="Выстрелить",
-            command=confirm_shot
+            command=self.confirm_player_shot
         ).pack(pady=10)
 
         ctk.CTkButton(
-            selection_window,
+            self.selection_window,
             text="Отмена",
-            command=selection_window.destroy
+            command=self.selection_window.destroy
         ).pack(pady=5)
+
+    def confirm_player_shot(self):
+        """Подтверждение выстрела в выбранного игрока"""
+        if hasattr(self, 'player_var') and self.player_var:
+            selected_player = self.player_var.get()
+            if selected_player:
+                self.send_action(f"игрок {selected_player}")
+        if hasattr(self, 'selection_window') and self.selection_window:
+            self.selection_window.destroy()
 
     def add_to_log(self, message):
         """Добавление сообщения в лог"""
@@ -303,11 +339,7 @@ class RussianRouletteClient:
         self.game_log.see('end')
 
     def send_action(self, action):
-    #    """Отправка действия на сервер"""
-    #    if not self.is_my_turn and self.game_started:
-    #       self.add_to_log("Сейчас не ваш ход!")
-    #        return
-
+        """Отправка действия на сервер"""
         try:
             self.client_socket.send(action.encode())
         except Exception as e:
